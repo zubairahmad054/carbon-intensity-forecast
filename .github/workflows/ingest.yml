@@ -1,0 +1,21 @@
+name: Hourly ingest
+
+# Keeps the database fresh: pulls the latest actuals, NESO forecast and
+# generation mix by calling the deployed /api/ingest endpoint.
+on:
+  schedule:
+    - cron: "5 * * * *" # every hour at :05 UTC
+  workflow_dispatch: {}
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger ingest
+        run: |
+          curl -fsS -X POST "$APP_URL/api/ingest" \
+            -H "Authorization: Bearer $INGEST_TOKEN" \
+            -w "\nHTTP %{http_code}\n"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}

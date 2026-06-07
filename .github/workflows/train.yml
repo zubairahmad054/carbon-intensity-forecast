@@ -1,0 +1,26 @@
+name: Daily retrain
+
+# Refreshes our model and its 48h forecast so it never goes stale.
+# Runs the Python pipeline directly against Neon (no web tier involved).
+on:
+  schedule:
+    - cron: "30 3 * * *" # 03:30 UTC daily
+  workflow_dispatch: {}
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: pip install -r scripts/requirements.txt
+      # Patch any recent ingest gaps, then retrain + write a fresh forecast.
+      - run: python scripts/backfill.py 7
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      - run: python scripts/train.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
