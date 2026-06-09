@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { getSql } from "@/lib/db"
 import { fetchIntensityHistory, fetchForecast48h, fetchGenerationHistory } from "@/lib/neso-api"
+import { fetchAgilePrices, AGILE_REGION } from "@/lib/octopus-agile"
 import { getIntensityIndex } from "@/lib/types"
 
 // NESO's official forward forecast is stored under this version so it can sit
@@ -122,6 +123,34 @@ export async function POST(req: Request) {
       console.error("Generation ingestion failed (continuing):", e)
     }
 
+    // 4) Agile prices: half-hourly unit price, back 24h and forward as far as
+    //    published (~16-38h). Non-fatal if the tariff/region can't be resolved.
+    let priceInserted = 0
+    let priceTotal = 0
+    try {
+      const prices = await fetchAgilePrices(24, 48)
+      priceTotal = prices.length
+      if (prices.length > 0) {
+        const pParams: unknown[] = []
+        const pTuples = prices.map((r, i) => {
+          const b = i * 2
+          pParams.push(r.periodStart, r.priceIncVat)
+          return `($${b + 1}, '${AGILE_REGION}', $${b + 2})`
+        })
+        const pRows = await sql.query(
+          `INSERT INTO agile_prices (timestamp, region, price_p_kwh)
+           VALUES ${pTuples.join(", ")}
+           ON CONFLICT (timestamp) DO UPDATE SET
+             region = EXCLUDED.region, price_p_kwh = EXCLUDED.price_p_kwh
+           RETURNING (xmax = 0) AS inserted`,
+          pParams
+        )
+        priceInserted = pRows.filter((r) => r.inserted).length
+      }
+    } catch (e) {
+      console.error("Agile price ingestion failed (continuing):", e)
+    }
+
     return NextResponse.json({
       success: true,
       observations: {
@@ -139,6 +168,12 @@ export async function POST(req: Request) {
         total: genTotal,
         inserted: genInserted,
         updated: genTotal - genInserted,
+      },
+      prices: {
+        total: priceTotal,
+        inserted: priceInserted,
+        updated: priceTotal - priceInserted,
+        region: AGILE_REGION,
       },
     })
   } catch (error) {

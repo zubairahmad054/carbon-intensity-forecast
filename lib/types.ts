@@ -34,6 +34,7 @@ export interface CurrentIntensityResponse {
     timestamp: string
     actual: number | null
     forecast: number | null
+    marginal: number | null // marginal gCO2/kWh — what one extra kWh emits right now
     index: IntensityIndex
     trend: "rising" | "falling" | "stable"
   } | null
@@ -96,6 +97,8 @@ export interface ForecastResponse {
 export interface ForecastPoint {
   target_time: string
   predicted_intensity: number
+  marginal: number | null // forecast marginal gCO2/kWh (null until computed)
+  price: number | null // forecast unit price p/kWh inc. VAT (null outside priced horizon)
 }
 
 export interface ModelMetricsResponse {

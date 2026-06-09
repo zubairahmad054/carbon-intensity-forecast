@@ -19,6 +19,12 @@ The official [Carbon Intensity dashboard](https://carbonintensity.org.uk/) shows
 - **Published accuracy.** Every forecast is stored and later scored against the metered actual — so the dashboard shows realised MAE/RMSE for our model **head-to-head against NESO's own forecast**.
 - **Self-explaining metrics.** Tap any metrics card to see what MAE / RMSE / R² / Bias mean for carbon intensity, generated from the live numbers.
 
+And a **flexibility layer** that turns the forecast into a decision ([design doc](./docs/roadmap-flex.md)):
+
+- **Marginal emissions**, not just average — what *one extra kWh* actually emits (the gas plant that responds), the metric that matters for any decision to use or shift power. NESO only shows the average.
+- **A "best time to run" scheduler.** Give it a load + duration + deadline and it finds the optimal 48 h window, reporting savings on both an honest grid-average and a marginal (consequential) basis.
+- **Carbon × price co-optimisation.** Overlays live Octopus Agile prices so the scheduler optimises for cleanest, cheapest, or the balance between them.
+
 ---
 
 ## Architecture
@@ -26,28 +32,30 @@ The official [Carbon Intensity dashboard](https://carbonintensity.org.uk/) shows
 ```
 GitHub Actions (cron)
 ┌───────────────────────────┐        ┌──────────────────────────────┐
-│ Hourly: POST /api/ingest  │        │ Daily: python scripts/train.py│
-│ → latest actuals,         │        │ → backfill gaps, fetch weather │
+│ Hourly: POST /api/ingest  │        │ Daily: train.py → marginal.py │
+│ → latest actuals,         │        │ → backfill, fetch weather      │
 │   NESO forecast,          │        │   (Open-Meteo), train model,   │
-│   generation mix          │        │   recursive 48h forecast       │
+│   generation mix,         │        │   recursive 48h forecast,      │
+│   Agile prices            │        │   marginal (hist + forward)    │
 └────────────┬──────────────┘        └───────────────┬───────────────┘
              │ writes                                 │ writes
              ▼                                        ▼
         ┌─────────────────────────────────────────────────┐
         │                Neon Postgres                     │
-        │  carbon_intensity · generation_mix ·             │
-        │  forecasts · model_metrics                       │
+        │  carbon_intensity · generation_mix · forecasts · │
+        │  model_metrics · marginal_intensity · agile_prices│
         └───────────────────────┬─────────────────────────┘
                                  │ reads (dynamic)
                                  ▼
         ┌─────────────────────────────────────────────────┐
         │   Next.js 16 on Vercel (App Router)              │
-        │   • Dashboard (gauge, mix, forecast, accuracy)   │
+        │   • Dashboard (gauge, mix, forecast, accuracy,   │
+        │     "best time to run" scheduler)                │
         │   • /api/* route handlers serving JSON           │
         └─────────────────────────────────────────────────┘
                                  ▲
                                  │ source data
-        UK Carbon Intensity API  ·  Open-Meteo (weather)
+   UK Carbon Intensity API · Open-Meteo (weather) · Octopus Agile (price)
 ```
 
 Training and serving are **decoupled**: the model runs only in GitHub Actions (Python), writes to Neon, and the web tier just serves what's there. Local dev and production share one Neon database, so going live needs no data export.
@@ -61,7 +69,8 @@ Training and serving are **decoupled**: the model runs only in GitHub Actions (P
 | Database | Neon Postgres (`@neondatabase/serverless`) + versioned SQL migrations |
 | Model | Python · scikit-learn `GradientBoostingRegressor` · pandas/numpy |
 | Weather | Open-Meteo (free, no key) — wind@100m, solar radiation, temperature |
-| Automation | GitHub Actions (hourly ingest, daily retrain, CI) |
+| Prices | Octopus Energy Agile API (free, no key) — half-hourly unit price |
+| Automation | GitHub Actions (hourly ingest, daily retrain + marginal, CI) |
 | Hosting | Vercel (auto-deploys on push to `main`) |
 
 ## API
@@ -72,11 +81,12 @@ Base URL: `https://carbon-intensity-forecasting.vercel.app`
 |---|---|
 | `GET /api/intensity/current` | Latest half-hour: actual, NESO forecast, index, trend |
 | `GET /api/intensity/history?period=24h\|48h\|7d` | Historical actual vs NESO forecast |
-| `GET /api/forecasts` | Our model's 48h forecast (`model_version: ours-v1`) |
+| `GET /api/forecasts` | Three-channel forward signal: our 48h forecast + marginal + Agile price |
+| `GET /api/schedule?power=&duration=&deadline=&objective=` | Best window to run a load (`objective`: `carbon`/`cost`/`balanced`) |
 | `GET /api/generation/current` | Live fuel mix (wind/solar/gas/nuclear/…) + % low-carbon |
 | `GET /api/accuracy` | Realised MAE/RMSE/Bias per model vs settled actuals |
 | `GET /api/metrics` | Trained model's held-out metrics |
-| `POST /api/ingest` | Ingest latest data (token-protected via `INGEST_TOKEN`) |
+| `POST /api/ingest` | Ingest latest data + Agile prices (token-protected via `INGEST_TOKEN`) |
 
 ```bash
 curl https://carbon-intensity-forecasting.vercel.app/api/forecasts
@@ -126,11 +136,18 @@ For the 48-hour horizon, `lag_48` falls in the unknown future, so inference is *
 
 - Multi-point, wind-capacity-weighted weather features
 - Quantile / conformal prediction intervals
-- **Marginal** emissions factor (what an extra kWh actually causes), not just average
-- Carbon × **price** co-optimisation (e.g. Octopus Agile) → a smart-charging scheduler
+- Score the **marginal** forecast against realised marginal (the accuracy engine already supports it)
+- A regression-based marginal model (vs the current merit-order rule) once absolute demand data is wired in
+
+> Marginal emissions and a carbon × price scheduler were on this list and are now **built** — see the [flexibility layer design doc](./docs/roadmap-flex.md).
 
 ## Data & licence
 
 - Carbon intensity & generation mix: **NESO / National Grid ESO Carbon Intensity API** (CC BY 4.0)
 - Weather: **Open-Meteo** (free tier)
+- Electricity prices: **Octopus Energy Agile** API (free, public)
 - Code: MIT
+
+---
+
+Made by **Zubair Ahmad** — [github.com/zubairahmad054](https://github.com/zubairahmad054)

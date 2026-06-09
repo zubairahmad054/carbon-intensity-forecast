@@ -1,16 +1,25 @@
 "use client"
 
+import { useState, useCallback } from "react"
 import useSWR from "swr"
-import { IntensityGauge } from "@/components/intensity-gauge"
 import { ForecastChart } from "@/components/forecast-chart"
 import { HistoryChart } from "@/components/history-chart"
-import { BestTimePanel } from "@/components/best-time-panel"
+import { SchedulerCard } from "@/components/scheduler-card"
+import { CurrentIntensityCard } from "@/components/current-intensity-card"
 import { ModelMetricsCard } from "@/components/model-metrics-card"
 import { GenerationMixPanel } from "@/components/generation-mix-panel"
 import { AccuracyCard } from "@/components/accuracy-card"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { RefreshCw, Zap, AlertCircle } from "lucide-react"
+
+function GithubMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={className}>
+      <path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-1.7c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 5 18.3 5.3 18.3 5.3c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z" />
+    </svg>
+  )
+}
 import type { CurrentIntensityResponse, ForecastResponse, HistoryResponse, ModelMetricsResponse, GenerationMixResponse, AccuracyResponse } from "@/lib/types"
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
@@ -33,6 +42,14 @@ export default function Dashboard() {
 
   const { data: accuracyData, mutate: mutateAccuracy } =
     useSWR<AccuracyResponse>("/api/accuracy", fetcher, { refreshInterval: 300000 })
+
+  // The scheduler picks a window; the forecast chart shades it. One shared piece of
+  // state keeps the decision and the chart in sync.
+  const [scheduledWindow, setScheduledWindow] = useState<{ start: string; end: string } | null>(null)
+  const handleWindowChange = useCallback(
+    (w: { start: string; end: string } | null) => setScheduledWindow(w),
+    [],
+  )
 
   const refreshAll = () => {
     mutateCurrent()
@@ -73,39 +90,18 @@ export default function Dashboard() {
 
       <main className="container mx-auto px-4 py-8">
         <div className="grid gap-6 lg:grid-cols-3">
-          {/* Current Intensity - Full width on mobile, 1 col on desktop */}
-          <Card className="lg:col-span-1">
-            <CardHeader className="text-center">
-              <CardTitle>Current Intensity</CardTitle>
-              <CardDescription>Live carbon intensity reading</CardDescription>
-            </CardHeader>
-            <CardContent className="flex justify-center">
-              {currentLoading ? (
-                <div className="h-48 flex items-center justify-center">
-                  <div className="animate-pulse text-muted-foreground">Loading...</div>
-                </div>
-              ) : currentError ? (
-                <div className="h-48 flex flex-col items-center justify-center gap-2 text-muted-foreground">
-                  <AlertCircle className="h-8 w-8" />
-                  <span>Failed to load data</span>
-                </div>
-              ) : currentIntensity ? (
-                <IntensityGauge
-                  value={currentIntensity.actual ?? currentIntensity.forecast ?? 0}
-                  index={currentIntensity.index ?? "moderate"}
-                />
-              ) : (
-                <div className="h-48 flex flex-col items-center justify-center gap-2 text-muted-foreground">
-                  <AlertCircle className="h-8 w-8" />
-                  <span>No data available</span>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          {/* Current Intensity (with Average / Marginal toggle) */}
+          <div className="lg:col-span-1">
+            <CurrentIntensityCard
+              data={currentIntensity}
+              isLoading={currentLoading}
+              error={currentError}
+            />
+          </div>
 
-          {/* Best Time Panel */}
+          {/* Scheduler — the "best time to run" decision layer */}
           <div className="lg:col-span-2">
-            <BestTimePanel forecasts={forecasts} />
+            <SchedulerCard forecasts={forecasts} onWindowChange={handleWindowChange} />
           </div>
 
           {/* Forecast Chart - spans 2 columns */}
@@ -132,7 +128,7 @@ export default function Dashboard() {
                 </CardContent>
               </Card>
             ) : forecasts.length > 0 ? (
-              <ForecastChart data={forecasts} />
+              <ForecastChart data={forecasts} highlight={scheduledWindow} />
             ) : (
               <Card>
                 <CardHeader>
@@ -212,11 +208,34 @@ export default function Dashboard() {
                 className="text-primary hover:underline"
               >
                 National Grid ESO Carbon Intensity API
+              </a>{" "}
+              and{" "}
+              <a
+                href="https://developer.octopus.energy/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                Octopus Energy (Agile prices)
               </a>
             </p>
             <p>
               Carbon intensity measured in grams of CO2 equivalent per kilowatt-hour (gCO2/kWh)
             </p>
+          </div>
+
+          {/* Developer credit */}
+          <div className="mt-6 flex flex-col items-center gap-1.5 border-t pt-6 text-sm">
+            <p className="font-medium">Made by Zubair Ahmad</p>
+            <a
+              href="https://github.com/zubairahmad054"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-primary"
+            >
+              <GithubMark className="h-4 w-4" />
+              See my GitHub for more
+            </a>
           </div>
         </footer>
       </main>

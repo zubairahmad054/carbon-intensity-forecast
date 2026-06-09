@@ -1,9 +1,31 @@
 import { NextResponse } from "next/server"
 import { sql } from "@/lib/db"
-import { fetchLatestIntensity } from "@/lib/neso-api"
-import { getIntensityIndex, type CurrentIntensityResponse } from "@/lib/types"
+import { fetchLatestIntensity, fetchCurrentGeneration } from "@/lib/neso-api"
+import { marginalFromMix } from "@/lib/marginal"
+import { getIntensityIndex, type CurrentIntensityResponse, type GenerationMixPoint } from "@/lib/types"
 
 export const dynamic = "force-dynamic"
+
+/** Current marginal intensity, computed on the fly from the latest generation mix. */
+async function currentMarginal(): Promise<number | null> {
+  try {
+    const rows = await sql`SELECT * FROM generation_mix ORDER BY timestamp DESC LIMIT 1`
+    if (rows[0]) {
+      const r = rows[0]
+      const mix: GenerationMixPoint = {
+        timestamp: r.timestamp,
+        gas: Number(r.gas), coal: Number(r.coal), nuclear: Number(r.nuclear),
+        wind: Number(r.wind), solar: Number(r.solar), hydro: Number(r.hydro),
+        biomass: Number(r.biomass), imports: Number(r.imports), other: Number(r.other),
+      }
+      return marginalFromMix(mix).gco2
+    }
+  } catch {
+    // fall through to the live API below
+  }
+  const live = await fetchCurrentGeneration()
+  return live ? marginalFromMix({ timestamp: live.periodStart, ...live.mix }).gco2 : null
+}
 
 export async function GET() {
   try {
@@ -19,6 +41,7 @@ export async function GET() {
       console.warn("DB unavailable for current intensity, using live API:", (dbError as Error).message)
     }
 
+    const marginal = await currentMarginal().catch(() => null)
     let currentData = null
     let previousActual: number | null = null
 
@@ -30,6 +53,7 @@ export async function GET() {
         timestamp: current.timestamp,
         actual: current.actual,
         forecast: current.forecast,
+        marginal,
         index: current.index ?? getIntensityIndex(value),
         trend: calculateTrend(value, previousActual),
       }
@@ -42,6 +66,7 @@ export async function GET() {
           timestamp: latest.periodStart,
           actual: latest.actual,
           forecast: latest.forecast,
+          marginal,
           index: latest.index ?? getIntensityIndex(value),
           trend: "stable" as const,
         }

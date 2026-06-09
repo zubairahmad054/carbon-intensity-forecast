@@ -13,13 +13,19 @@ export async function GET() {
     futureLimit.setHours(futureLimit.getHours() + 48)
 
     // Try the database first; fall through to demo data if it's unavailable.
+    // Marginal intensity (#2) and Agile price (#3) join onto the same half-hour grid,
+    // so the forecast becomes the three-channel "forward signal" the scheduler reads.
     let result: Record<string, any>[] | null = null
     try {
       result = await sql`
-        SELECT target_time, predicted_intensity, model_version FROM forecasts
-        WHERE target_time >= ${now.toISOString()}
-          AND target_time <= ${futureLimit.toISOString()}
-        ORDER BY target_time ASC
+        SELECT f.target_time, f.predicted_intensity, f.model_version,
+               m.marginal_gco2, p.price_p_kwh
+        FROM forecasts f
+        LEFT JOIN marginal_intensity m ON m.timestamp = f.target_time
+        LEFT JOIN agile_prices p ON p.timestamp = f.target_time
+        WHERE f.target_time >= ${now.toISOString()}
+          AND f.target_time <= ${futureLimit.toISOString()}
+        ORDER BY f.target_time ASC
       `
     } catch (dbError) {
       console.warn("DB unavailable for forecasts, using demo data:", (dbError as Error).message)
@@ -42,7 +48,10 @@ export async function GET() {
         .filter((row) => row.model_version === preferred)
         .map((row) => ({
           target_time: row.target_time,
-          predicted_intensity: row.predicted_intensity,
+          predicted_intensity: Number(row.predicted_intensity),
+          // NUMERIC columns arrive as strings from the driver — coerce.
+          marginal: row.marginal_gco2 != null ? Number(row.marginal_gco2) : null,
+          price: row.price_p_kwh != null ? Number(row.price_p_kwh) : null,
         }))
       modelVersion = preferred
     } else {
@@ -108,6 +117,8 @@ function generateDemoForecasts(): ForecastPoint[] {
     forecasts.push({
       target_time: targetTime.toISOString(),
       predicted_intensity: predictedIntensity,
+      marginal: null,
+      price: null,
     })
   }
 

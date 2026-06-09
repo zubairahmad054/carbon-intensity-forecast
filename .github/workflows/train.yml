@@ -24,3 +24,7 @@ jobs:
       - run: python scripts/train.py
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # Derive marginal intensity (historical + forward) now the fresh forecast exists.
+      - run: python scripts/marginal.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

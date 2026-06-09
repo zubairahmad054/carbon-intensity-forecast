@@ -21,3 +21,7 @@ scripts/__pycache__/
 
 # Local tooling
 .claude/settings.local.json
+.vercel
+
+# TS build cache
+tsconfig.tsbuildinfo
