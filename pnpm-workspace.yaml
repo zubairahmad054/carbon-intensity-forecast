@@ -1,3 +1,13 @@
+packages:
+  - "."
+
+# Dependencies allowed to run install/build scripts. Newer pnpm blocks unapproved
+# build scripts (ERR_PNPM_IGNORED_BUILDS): pnpm v11 reads allowBuilds, v10 reads
+# onlyBuiltDependencies — both kept so any toolchain version installs cleanly.
 allowBuilds:
-  msw: set this to true or false
-  sharp: set this to true or false
+  msw: true
+  sharp: true
+
+onlyBuiltDependencies:
+  - msw
+  - sharp
