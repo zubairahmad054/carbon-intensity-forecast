@@ -105,13 +105,6 @@ export interface ModelMetricsResponse {
   data: ModelMetrics | null
 }
 
-export interface BestTimeSlot {
-  start: string
-  end: string
-  average_intensity: number
-  index: IntensityIndex
-}
-
 // Intensity index thresholds (gCO2/kWh)
 export type IntensityIndex = "very low" | "low" | "moderate" | "high" | "very high"
 

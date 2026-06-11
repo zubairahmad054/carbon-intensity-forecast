@@ -67,14 +67,18 @@ function summarise(slice: SignalPoint[]): ScheduleWindow {
  * Rank every contiguous window of `durationHalfHours` slots that finishes by the
  * deadline, best (lowest score) first. The objective decides the score:
  *   - carbon:   average predicted intensity
- *   - cost:     average price (windows without full price coverage are dropped)
+ *   - cost:     average price (degrades to carbon ranking when nothing is priced)
  *   - balanced: equal blend of intensity and price, each min-max normalised across
- *               the candidate set (needs price; falls back to carbon if none priced)
+ *               the candidate set; unpriced windows compete on normalised intensity
+ *               alone, so the clean unpriced tail of the horizon can still win
+ *
+ * An invalid `deadline` (unparseable → NaN) is treated as no deadline.
  */
 export function rankWindows(points: SignalPoint[], params: ScheduleParams): RankedWindow[] {
   const n = Math.max(1, Math.floor(params.durationHalfHours))
   const objective = params.objective ?? "carbon"
-  const deadlineMs = params.deadline ? new Date(params.deadline).getTime() : Infinity
+  const parsedDeadline = params.deadline ? new Date(params.deadline).getTime() : NaN
+  const deadlineMs = Number.isFinite(parsedDeadline) ? parsedDeadline : Infinity
 
   // Build raw candidate windows (contiguous, finishing by the deadline).
   const candidates: ScheduleWindow[] = []
@@ -87,10 +91,12 @@ export function rankWindows(points: SignalPoint[], params: ScheduleParams): Rank
   if (candidates.length === 0) return []
 
   const priced = candidates.filter((w) => w.avgPrice != null)
+  // Cost/balanced need prices. With none priced, degrade to carbon ranking instead
+  // of returning nothing — the caller's `priced` flag says which mode actually ran.
   const useCost = (objective === "cost" || objective === "balanced") && priced.length > 0
-  const pool = objective === "cost" ? priced : candidates
+  const pool = objective === "cost" && useCost ? priced : candidates
 
-  // Normalisation bounds for the balanced objective.
+  // Min-max bounds so intensity and price are comparable on one [0,1] scale.
   const iVals = pool.map((w) => w.avgIntensity)
   const pVals = priced.map((w) => w.avgPrice as number)
   const norm = (v: number, lo: number, hi: number) => (hi > lo ? (v - lo) / (hi - lo) : 0)
@@ -101,17 +107,38 @@ export function rankWindows(points: SignalPoint[], params: ScheduleParams): Rank
 
   const scored = pool.map((w): RankedWindow => {
     let score: number
-    if (objective === "cost") {
+    if (objective === "cost" && useCost) {
       score = w.avgPrice as number
-    } else if (objective === "balanced" && useCost && w.avgPrice != null) {
-      score = 0.5 * norm(w.avgIntensity, iLo, iHi) + 0.5 * norm(w.avgPrice, pLo, pHi)
+    } else if (objective === "balanced" && useCost) {
+      // One scale for every candidate: priced windows blend both channels,
+      // unpriced windows compete on normalised intensity alone. (Previously
+      // unpriced windows scored raw gCO2 (~50-400) against normalised [0,1]
+      // and could never win, silently excluding the cleaner horizon tail.)
+      score =
+        w.avgPrice != null
+          ? 0.5 * norm(w.avgIntensity, iLo, iHi) + 0.5 * norm(w.avgPrice, pLo, pHi)
+          : norm(w.avgIntensity, iLo, iHi)
     } else {
-      score = w.avgIntensity // carbon (and balanced fallback when nothing is priced)
+      score = w.avgIntensity // carbon (and the unpriced degradation for cost/balanced)
     }
     return { ...w, score }
   })
 
   return scored.sort((a, b) => a.score - b.score)
+}
+
+/**
+ * The "run now" baseline: the earliest possible window of the same length.
+ * First-class here so the API route and the dashboard card share one definition
+ * and can never disagree on the savings denominator.
+ */
+export function baselineWindow(
+  points: SignalPoint[],
+  durationHalfHours: number,
+): ScheduleWindow | null {
+  const n = Math.max(1, Math.floor(durationHalfHours))
+  if (points.length < n) return null
+  return summarise(points.slice(0, n))
 }
 
 export interface WindowSavings {

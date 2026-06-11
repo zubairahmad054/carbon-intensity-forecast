@@ -1,60 +1,32 @@
 import { NextResponse } from "next/server"
-import { sql } from "@/lib/db"
+import { loadForwardSignal } from "@/lib/forward-signal"
 import type { ForecastPoint, ForecastResponse } from "@/lib/types"
 
 export const dynamic = "force-dynamic"
 
 export async function GET() {
   try {
-    // Get forecasts for the next 48 hours, preferring the most recently produced
-    // model version present in the table.
-    const now = new Date()
-    const futureLimit = new Date()
-    futureLimit.setHours(futureLimit.getHours() + 48)
-
-    // Try the database first; fall through to demo data if it's unavailable.
-    // Marginal intensity (#2) and Agile price (#3) join onto the same half-hour grid,
-    // so the forecast becomes the three-channel "forward signal" the scheduler reads.
-    let result: Record<string, any>[] | null = null
+    // The shared forward-signal loader (same one /api/schedule uses) joins our
+    // forecast with the marginal and price channels and applies the model-version
+    // preference. Fall through to demo data only if the DB is unavailable/empty.
+    let forecasts: ForecastPoint[] | null = null
+    let modelVersion: string | null = null
     try {
-      result = await sql`
-        SELECT f.target_time, f.predicted_intensity, f.model_version,
-               m.marginal_gco2, p.price_p_kwh
-        FROM forecasts f
-        LEFT JOIN marginal_intensity m ON m.timestamp = f.target_time
-        LEFT JOIN agile_prices p ON p.timestamp = f.target_time
-        WHERE f.target_time >= ${now.toISOString()}
-          AND f.target_time <= ${futureLimit.toISOString()}
-        ORDER BY f.target_time ASC
-      `
+      const signal = await loadForwardSignal(48)
+      if (signal.points.length > 0) {
+        forecasts = signal.points.map((p) => ({
+          target_time: p.target_time,
+          predicted_intensity: p.intensity,
+          marginal: p.marginal,
+          price: p.price,
+        }))
+        modelVersion = signal.modelVersion
+      }
     } catch (dbError) {
       console.warn("DB unavailable for forecasts, using demo data:", (dbError as Error).message)
     }
 
-    let forecasts: ForecastPoint[]
-    let modelVersion: string
-
-    if (result && result.length > 0) {
-      // Multiple model versions may overlap the window (NESO baseline + our model).
-      // Prefer our own model ("ours-…") over the NESO baseline so the chart shows
-      // the model we're proud of; the accuracy card still benchmarks both.
-      const versions = Array.from(new Set(result.map((r) => r.model_version)))
-      const preferred =
-        versions.find((v) => v.startsWith("ours")) ??
-        versions.find((v) => v === "neso-fw48h") ??
-        versions[0]
-
-      forecasts = result
-        .filter((row) => row.model_version === preferred)
-        .map((row) => ({
-          target_time: row.target_time,
-          predicted_intensity: Number(row.predicted_intensity),
-          // NUMERIC columns arrive as strings from the driver — coerce.
-          marginal: row.marginal_gco2 != null ? Number(row.marginal_gco2) : null,
-          price: row.price_p_kwh != null ? Number(row.price_p_kwh) : null,
-        }))
-      modelVersion = preferred
-    } else {
+    if (!forecasts) {
       // Demo data only when the table is genuinely empty (e.g. before first ingest).
       forecasts = generateDemoForecasts()
       modelVersion = "demo"
@@ -79,7 +51,7 @@ export async function GET() {
 function generateDemoForecasts(): ForecastPoint[] {
   const forecasts: ForecastPoint[] = []
   const now = new Date()
-  
+
   // Generate 48 hours of forecasts at 30-minute intervals
   for (let i = 0; i < 96; i++) {
     const targetTime = new Date(now)

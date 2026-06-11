@@ -8,43 +8,31 @@
  * intensity is that generator's emissions factor.
  *
  * v1 rule: a merit order. We walk the fuels from most- to least-expensive-to-run and
- * take the first one with a meaningful share as "on the margin". Factors are the
- * official Carbon Intensity API values (gCO2/kWh).
+ * take the first one with a meaningful share as "on the margin".
  *
- * NOTE: keep this in sync with scripts/marginal.py (same factors + merit order).
+ * The factors, merit order and threshold live in config/fuel-factors.json — the
+ * single source of truth shared with scripts/marginal.py, so the live (TS) and
+ * stored (Python) marginal series cannot drift.
  */
 import type { GenerationMixPoint } from "./types"
+import fuelConfig from "@/config/fuel-factors.json"
+
+type Fuel = keyof typeof fuelConfig.factors
 
 /** Official Carbon Intensity API fuel carbon factors, gCO2/kWh. */
-export const FUEL_CARBON_FACTORS = {
-  gas: 394, // CCGT
-  coal: 937,
-  biomass: 120,
-  imports: 200, // blended interconnectors (FR ~53, NL ~474, IE ~458) — representative
-  other: 300,
-  nuclear: 0,
-  wind: 0,
-  solar: 0,
-  hydro: 0,
-} as const
+export const FUEL_CARBON_FACTORS: Record<Fuel, number> = fuelConfig.factors
 
 // Most-expensive-to-run first: the marginal plant is the last one dispatched, i.e.
 // the dirtiest/most-expensive flexible fuel currently running above the threshold.
-const MERIT_ORDER: (keyof GenerationMixPoint & keyof typeof FUEL_CARBON_FACTORS)[] = [
-  "coal",
-  "gas",
-  "other",
-  "imports",
-  "biomass",
-]
+const MERIT_ORDER = fuelConfig.meritOrder as Fuel[]
 
-const SHARE_THRESHOLD = 1.0 // % — ignore trace amounts of a fuel
+const SHARE_THRESHOLD = fuelConfig.shareThresholdPct // % — ignore trace amounts of a fuel
 
 export interface MarginalEstimate {
   /** gCO2/kWh attributed to the marginal generator. */
   gco2: number
   /** Which fuel was deemed on the margin (null when the grid is effectively all low-carbon). */
-  fuel: keyof typeof FUEL_CARBON_FACTORS | null
+  fuel: Fuel | null
 }
 
 /**
@@ -54,7 +42,8 @@ export interface MarginalEstimate {
  */
 export function marginalFromMix(mix: GenerationMixPoint): MarginalEstimate {
   for (const fuel of MERIT_ORDER) {
-    if ((mix[fuel] ?? 0) >= SHARE_THRESHOLD) {
+    const share = mix[fuel as keyof GenerationMixPoint & Fuel] ?? 0
+    if (share >= SHARE_THRESHOLD) {
       return { gco2: FUEL_CARBON_FACTORS[fuel], fuel }
     }
   }

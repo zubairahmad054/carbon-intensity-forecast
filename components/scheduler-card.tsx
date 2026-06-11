@@ -8,6 +8,7 @@ import type { ForecastPoint } from "@/lib/types"
 import {
   rankWindows,
   windowSavings,
+  baselineWindow,
   type SignalPoint,
   type ScheduleObjective,
 } from "@/lib/schedule"
@@ -45,6 +46,15 @@ export function SchedulerCard({ forecasts, onWindowChange, className }: Schedule
   const [withinHours, setWithinHours] = useState(24)
   const [objective, setObjective] = useState<ScheduleObjective>("carbon")
 
+  // A minute tick so the deadline (and hence the ranking) tracks wall-clock time
+  // even when SWR pauses polling (e.g. a backgrounded tab) — otherwise the
+  // recommended window can quietly age into the past.
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000)
+    return () => clearInterval(id)
+  }, [])
+
   const signal: SignalPoint[] = useMemo(
     () =>
       forecasts.map((f) => ({
@@ -60,18 +70,17 @@ export function SchedulerCard({ forecasts, onWindowChange, className }: Schedule
 
   const { best, savings, alternatives } = useMemo(() => {
     const durationHalfHours = Math.round(durationH * 2)
-    const deadline = new Date(Date.now() + withinHours * 3_600_000).toISOString()
+    const deadline = new Date(nowMs + withinHours * 3_600_000).toISOString()
     const ranked = rankWindows(signal, { durationHalfHours, deadline, objective })
-    const baseline = rankWindows(signal, { durationHalfHours, objective: "carbon" }).find(
-      (w) => w.start === signal[0]?.target_time,
-    )
+    // Shared "run now" definition from lib/schedule.ts — same one the API uses.
+    const baseline = baselineWindow(signal, durationHalfHours)
     const top = ranked[0]
     return {
       best: top,
       savings: top && baseline ? windowSavings(power, top, baseline) : null,
       alternatives: ranked.slice(1, 3),
     }
-  }, [signal, power, durationH, withinHours, objective])
+  }, [signal, power, durationH, withinHours, objective, nowMs])
 
   // Lift the chosen window so the forecast chart can highlight it.
   useEffect(() => {

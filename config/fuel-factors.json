@@ -1,0 +1,16 @@
+{
+  "_comment": "Single source of truth for the marginal-emissions merit-order rule. Loaded by BOTH lib/marginal.ts (live values) and scripts/marginal.py (stored series) so the two implementations cannot drift. Factors are the official Carbon Intensity API values, gCO2/kWh. meritOrder is most-expensive-to-run first; a fuel must hold at least shareThresholdPct of the mix to be deemed on the margin.",
+  "factors": {
+    "gas": 394,
+    "coal": 937,
+    "biomass": 120,
+    "imports": 200,
+    "other": 300,
+    "nuclear": 0,
+    "wind": 0,
+    "solar": 0,
+    "hydro": 0
+  },
+  "meritOrder": ["coal", "gas", "other", "imports", "biomass"],
+  "shareThresholdPct": 1.0
+}

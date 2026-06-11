@@ -6,10 +6,19 @@ import { getIntensityIndex, type CurrentIntensityResponse, type GenerationMixPoi
 
 export const dynamic = "force-dynamic"
 
-/** Current marginal intensity, computed on the fly from the latest generation mix. */
+/**
+ * Current marginal intensity from the latest generation mix. Presented as "right
+ * now", so a stale mix (ingest down for hours) must NOT serve — only a DB row from
+ * the last 2h qualifies; otherwise ask the live API, otherwise null.
+ */
 async function currentMarginal(): Promise<number | null> {
   try {
-    const rows = await sql`SELECT * FROM generation_mix ORDER BY timestamp DESC LIMIT 1`
+    const rows = await sql`
+      SELECT * FROM generation_mix
+      WHERE timestamp > now() - interval '2 hours'
+      ORDER BY timestamp DESC
+      LIMIT 1
+    `
     if (rows[0]) {
       const r = rows[0]
       const mix: GenerationMixPoint = {
@@ -29,19 +38,26 @@ async function currentMarginal(): Promise<number | null> {
 
 export async function GET() {
   try {
-    // Try the database first; fall through to the live API if it's unavailable.
-    let result: Record<string, any>[] | null = null
-    try {
-      result = await sql`
+    // The main reading and the marginal are independent — fetch them in parallel
+    // (this route is polled every 30s). DB failure falls through to the live API.
+    // The async wrapper matters: a missing DATABASE_URL throws synchronously from
+    // the sql template, and only an async body turns that into a caught rejection.
+    const fetchLatestRows = async (): Promise<Record<string, any>[] | null> =>
+      sql`
         SELECT * FROM carbon_intensity
         ORDER BY timestamp DESC
         LIMIT 2
       `
-    } catch (dbError) {
-      console.warn("DB unavailable for current intensity, using live API:", (dbError as Error).message)
-    }
-
-    const marginal = await currentMarginal().catch(() => null)
+    const [result, marginal] = await Promise.all([
+      fetchLatestRows().catch((dbError) => {
+        console.warn(
+          "DB unavailable for current intensity, using live API:",
+          (dbError as Error).message
+        )
+        return null
+      }),
+      currentMarginal().catch(() => null),
+    ])
     let currentData = null
     let previousActual: number | null = null
 

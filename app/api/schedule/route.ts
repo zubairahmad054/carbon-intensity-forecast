@@ -1,64 +1,44 @@
 import { NextResponse } from "next/server"
-import { sql } from "@/lib/db"
+import { loadForwardSignal } from "@/lib/forward-signal"
 import {
   rankWindows,
   windowSavings,
-  type SignalPoint,
+  baselineWindow,
   type ScheduleObjective,
   type RankedWindow,
-  type ScheduleWindow,
 } from "@/lib/schedule"
 
 export const dynamic = "force-dynamic"
+
+const OBJECTIVES: ScheduleObjective[] = ["carbon", "cost", "balanced"]
 
 /**
  * "Best time to run" — the decision layer over the forward signal.
  *
  * GET /api/schedule?power=7&duration=3&deadline=ISO&objective=carbon|cost|balanced
  *
- * Reads the three-channel forward signal (forecast intensity + marginal + price)
- * straight from Neon and slides a window across it. Pure ranking lives in
- * lib/schedule.ts, shared with the interactive card so they can't diverge.
+ * Reads the shared forward signal (forecast + marginal + price) and slides a
+ * window across it. Ranking and the "run now" baseline live in lib/schedule.ts,
+ * shared with the dashboard card so the two can never disagree.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url)
   const powerKw = clampNum(url.searchParams.get("power"), 7, 0.1, 1000)
   const durationH = clampNum(url.searchParams.get("duration"), 2, 0.5, 24)
-  const objective = (url.searchParams.get("objective") as ScheduleObjective) || "carbon"
-  const deadline = url.searchParams.get("deadline")
+  const rawObjective = url.searchParams.get("objective")
+  const objective: ScheduleObjective = OBJECTIVES.includes(rawObjective as ScheduleObjective)
+    ? (rawObjective as ScheduleObjective)
+    : "carbon"
+  const deadline = parseDeadline(url.searchParams.get("deadline"))
   const durationHalfHours = Math.max(1, Math.round(durationH * 2))
 
   try {
-    let rows: Record<string, any>[] = []
+    let signal: Awaited<ReturnType<typeof loadForwardSignal>>["points"] = []
     try {
-      rows = await sql`
-        SELECT f.target_time, f.predicted_intensity, f.model_version,
-               m.marginal_gco2, p.price_p_kwh
-        FROM forecasts f
-        LEFT JOIN marginal_intensity m ON m.timestamp = f.target_time
-        LEFT JOIN agile_prices p ON p.timestamp = f.target_time
-        WHERE f.target_time >= now()
-        ORDER BY f.target_time ASC
-      `
+      signal = (await loadForwardSignal(48)).points
     } catch (dbError) {
       console.warn("DB unavailable for schedule:", (dbError as Error).message)
     }
-
-    // Prefer our own model over the NESO baseline, like /api/forecasts does.
-    const versions = Array.from(new Set(rows.map((r) => r.model_version)))
-    const preferred =
-      versions.find((v) => v?.startsWith("ours")) ??
-      versions.find((v) => v === "neso-fw48h") ??
-      versions[0]
-
-    const signal: SignalPoint[] = rows
-      .filter((r) => r.model_version === preferred)
-      .map((r) => ({
-        target_time: r.target_time,
-        intensity: Number(r.predicted_intensity),
-        marginal: r.marginal_gco2 != null ? Number(r.marginal_gco2) : null,
-        price: r.price_p_kwh != null ? Number(r.price_p_kwh) : null,
-      }))
 
     if (signal.length < durationHalfHours) {
       return NextResponse.json({
@@ -70,11 +50,9 @@ export async function GET(req: Request) {
       })
     }
 
+    const priced = signal.some((p) => p.price != null)
     const ranked = rankWindows(signal, { durationHalfHours, deadline, objective })
-    // Baseline = "run now": the earliest window of the same length.
-    const baseline = rankWindows(signal, { durationHalfHours, objective: "carbon" }).find(
-      (w) => w.start === signal[0].target_time,
-    )
+    const baseline = baselineWindow(signal, durationHalfHours)
 
     const withSavings = ranked.slice(0, 5).map((w: RankedWindow) => ({
       ...w,
@@ -83,10 +61,18 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       windows: withSavings,
-      baseline: (baseline ?? null) as ScheduleWindow | null,
+      baseline,
       objective,
-      priced: signal.some((p) => p.price != null),
-      params: { powerKw, durationH, durationHalfHours },
+      priced,
+      // Cost/balanced degrade to carbon ranking when nothing is priced — say so
+      // instead of returning an unexplained result.
+      message:
+        !priced && objective !== "carbon"
+          ? "No price data in the horizon yet — ranked by carbon instead."
+          : ranked.length === 0
+            ? "No window fits before that deadline."
+            : undefined,
+      params: { powerKw, durationH, durationHalfHours, deadline },
     })
   } catch (error) {
     console.error("Error computing schedule:", error)
@@ -101,4 +87,10 @@ function clampNum(raw: string | null, fallback: number, lo: number, hi: number):
   const n = raw == null ? NaN : Number(raw)
   if (!Number.isFinite(n)) return fallback
   return Math.min(Math.max(n, lo), hi)
+}
+
+/** Reject unparseable deadlines up front (rankWindows would ignore them anyway). */
+function parseDeadline(raw: string | null): string | null {
+  if (!raw) return null
+  return Number.isFinite(new Date(raw).getTime()) ? raw : null
 }

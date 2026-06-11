@@ -21,9 +21,11 @@ interface ForecastChartProps {
   className?: string
 }
 
+// Units live in the labels: the tooltip shows three series on two different
+// scales (gCO2/kWh vs p/kWh), so every value must say which one it is.
 const chartConfig = {
-  predicted: { label: "Avg intensity", color: "var(--chart-1)" },
-  marginal: { label: "Marginal", color: "var(--chart-4)" },
+  predicted: { label: "Avg intensity (gCO₂/kWh)", color: "var(--chart-1)" },
+  marginal: { label: "Marginal (gCO₂/kWh)", color: "var(--chart-4)" },
   price: { label: "Price (p/kWh)", color: "var(--chart-2)" },
 } satisfies ChartConfig
 

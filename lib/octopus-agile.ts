@@ -44,9 +44,13 @@ export async function fetchAgilePrices(hoursBack = 24, hoursForward = 48): Promi
   const from = new Date(now - hoursBack * 3_600_000)
   const to = new Date(now + hoursForward * 3_600_000)
   const tariff = `E-1R-${PRODUCT}-${REGION}`
+  // page_size is load-bearing: the API defaults to 100 results (DESC by valid_from),
+  // and this request spans up to ~144 half-hours — without it the OLDEST rows are
+  // silently truncated once next-day prices publish. 1500 is the API maximum.
   const url =
     `${BASE}/products/${PRODUCT}/electricity-tariffs/${tariff}/standard-unit-rates/` +
-    `?period_from=${encodeURIComponent(toIso(from))}&period_to=${encodeURIComponent(toIso(to))}`
+    `?period_from=${encodeURIComponent(toIso(from))}&period_to=${encodeURIComponent(toIso(to))}` +
+    `&page_size=1500`
 
   const res = await fetch(url, {
     headers: { Accept: "application/json" },
