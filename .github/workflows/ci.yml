@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request: {}
 
+# GitHub forces actions onto Node 24 from 2026-06-16; opt in early so the
+# switch is verified green here rather than breaking the workflows that day.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   web:
     runs-on: ubuntu-latest

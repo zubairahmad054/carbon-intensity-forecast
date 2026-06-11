@@ -7,6 +7,11 @@ on:
     - cron: "30 3 * * *" # 03:30 UTC daily
   workflow_dispatch: {}
 
+# GitHub forces actions onto Node 24 from 2026-06-16; opt in early so the
+# switch is verified green here rather than breaking the nightly retrain.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   train:
     runs-on: ubuntu-latest
