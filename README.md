@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/zubairahmad054/carbon-intensity-forecast/actions/workflows/ci.yml/badge.svg)](https://github.com/zubairahmad054/carbon-intensity-forecast/actions/workflows/ci.yml)
 [![Live](https://img.shields.io/badge/demo-live-brightgreen)](https://carbon-intensity-forecasting.vercel.app)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](./CONTRIBUTING.md)
 
 **Live demo → https://carbon-intensity-forecasting.vercel.app**
 
@@ -141,12 +143,19 @@ For the 48-hour horizon, `lag_48` falls in the unknown future, so inference is *
 
 > Marginal emissions and a carbon × price scheduler were on this list and are now **built** — see the [flexibility layer design doc](./docs/roadmap-flex.md).
 
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, the
+PR workflow (`main` is protected; CI must pass), and the architecture ground rules.
+The roadmap above doubles as a wishlist of good first projects. Security issues:
+see [SECURITY.md](./SECURITY.md).
+
 ## Data & licence
 
 - Carbon intensity & generation mix: **NESO / National Grid ESO Carbon Intensity API** (CC BY 4.0)
 - Weather: **Open-Meteo** (free tier)
 - Electricity prices: **Octopus Energy Agile** API (free, public)
-- Code: MIT
+- Code: [MIT](./LICENSE)
 
 ---
 
